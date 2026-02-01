@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f5;
+            display: flex;
+            height: 100vh;
+        }
+        .sidebar {
+            width: 250px;
+            background: #075e54;
+            color: white;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .sidebar h2 {
+            font-size: 16px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+            padding-bottom: 10px;
+        }
+        .user-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+        .user-item:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .user-item.active {
+            background: #128c7e;
+            border-left-color: #fff;
+        }
+        .user-item .badge {
+            font-size: 11px;
+            background: #d9534f;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 10px;
+            float: right;
+        }
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: white;
+            padding: 15px 20px;
+            border-bottom: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            font-size: 20px;
+            color: #075e54;
+        }
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: white;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 12px;
+            border-radius: 8px;
+            max-width: 70%;
+        }
+        .message.user {
+            background: #e3f2fd;
+            margin-right: auto;
+            border-left: 3px solid #075e54;
+        }
+        .message.admin {
+            background: #f1f8e9;
+            margin-left: auto;
+            border-left: 3px solid #7cb342;
+        }
+        .message-time {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+        }
+        .input-area {
+            background: white;
+            padding: 15px 20px;
+            border-top: 1px solid #ddd;
+            display: flex;
+            gap: 10px;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            outline: none;
+        }
+        .input-area input:focus {
+            border-color: #075e54;
+            box-shadow: 0 0 4px rgba(7,94,84,0.2);
+        }
+        .input-area button {
+            background: #075e54;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .input-area button:hover {
+            background: #128c7e;
+        }
+        .empty-state {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #999;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>👥 Connected Users</h2>
+        <div id="users-list"></div>
+        <h2 style="margin-top: 30px;">ℹ️ Stats</h2>
+        <div style="font-size: 12px; color: rgba(255,255,255,0.7);">
+            Total: <span id="total-users">0</span><br>
+            Active: <span id="active-users">0</span>
+        </div>
+    </div>
+    
+    <div class="main">
+        <div class="header">
+            <h1>Admin Chat Dashboard</h1>
+            <p style="font-size: 12px; color: #666; margin-top: 5px;">Select a user to view and reply</p>
+        </div>
+        
+        <div class="chat-area">
+            <div id="messages" class="empty-state">
+                Select a user from the list to start chatting
+            </div>
+            
+            <div class="input-area" style="display: none;" id="reply-area">
+                <input type="text" id="reply-input" placeholder="Type your reply...">
+                <button onclick="sendReply()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let selectedUser = null;
+        let users = {};
+        let messages = {};
+
+        socket.on('connect', () => {
+            console.log('[ADMIN] Connected');
+            socket.emit('join');
+        });
+
+        socket.on('set_identity', d => {
+            console.log('[ADMIN] Identity:', d);
+        });
+
+        socket.on('new_msg', d => {
+            const from_sid = d.from_sid || 'broadcast';
+            if (!messages[from_sid]) messages[from_sid] = [];
+            messages[from_sid].push({user: d.user, text: d.text, time: new Date()});
+            
+            if (!users[from_sid]) {
+                users[from_sid] = d.user;
+                renderUsersList();
+            }
+            
+            if (selectedUser === from_sid) {
+                renderMessages();
+            }
+        });
+
+        function selectUser(sid) {
+            selectedUser = sid;
+            document.querySelectorAll('.user-item').forEach(el => el.classList.remove('active'));
+            event.target.closest('.user-item').classList.add('active');
+            renderMessages();
+        }
+
+        function renderUsersList() {
+            const list = document.getElementById('users-list');
+            list.innerHTML = '';
+            let count = 0;
+            for (let sid in users) {
+                count++;
+                const unread = messages[sid] ? messages[sid].length : 0;
+                const html = `<div class="user-item" onclick="selectUser('${sid}')">
+                    <span>${users[sid]}</span>
+                    ${unread > 0 ? `<span class="badge">${unread}</span>` : ''}
+                    <div style="font-size: 11px; color: rgba(255,255,255,0.6); margin-top: 3px;">${sid.substring(0, 8)}</div>
+                </div>`;
+                list.innerHTML += html;
+            }
+            document.getElementById('total-users').textContent = count;
+            document.getElementById('active-users').textContent = count;
+        }
+
+        function renderMessages() {
+            const area = document.getElementById('messages');
+            const replyArea = document.getElementById('reply-area');
+            
+            if (!selectedUser || !messages[selectedUser]) {
+                area.innerHTML = '<div class="empty-state">No messages</div>';
+                replyArea.style.display = 'none';
+                return;
+            }
+
+            let html = '';
+            messages[selectedUser].forEach(msg => {
+                const cls = msg.user === 'ADMIN' || msg.user.includes('ADMIN') ? 'admin' : 'user';
+                html += `<div class="message ${cls}">
+                    <strong>${msg.user}</strong><br>
+                    ${msg.text}
+                    <div class="message-time">${msg.time.toLocaleTimeString()}</div>
+                </div>`;
+            });
+            area.innerHTML = html;
+            area.scrollTop = area.scrollHeight;
+            replyArea.style.display = 'flex';
+        }
+
+        function sendReply() {
+            const input = document.getElementById('reply-input');
+            const text = input.value.trim();
+            if (!text || !selectedUser) return;
+            
+            socket.emit('message', {text: text, target_sid: selectedUser});
+            input.value = '';
+        }
+
+        document.getElementById('reply-input')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendReply();
+        });
+    </script>
+</body>
+</html>

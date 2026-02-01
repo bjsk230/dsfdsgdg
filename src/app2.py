@@ -1,7 +1,8 @@
 import os
 import random
+import secrets
 from datetime import datetime, timezone
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, session
 from flask_socketio import SocketIO, emit
 from flask_sqlalchemy import SQLAlchemy
 
@@ -31,6 +32,7 @@ with app.app_context():
 #--- ระบบจัดการแชท ---
 users = {}
 admins = set()
+admin_tokens = {}  # Maps token -> admin_sid
 # ADMIN_PASS should come from env in production. Keep a sensible default for local dev.
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'adminworakanjajakub')
 
@@ -42,9 +44,30 @@ def home():
 def chat():
     return render_template('index.html')
 
+@app.route('/admin')
+def admin():
+    return render_template('admin.html')
+
 @app.route('/health')
 def health():
     return {'status': 'ok'}
+
+@app.route('/api/messages')
+def api_messages():
+    """API to fetch message history (admin only)"""
+    # In production, verify admin token here
+    messages = Message.query.order_by(Message.timestamp.desc()).limit(100).all()
+    return {
+        'messages': [
+            {
+                'id': m.id,
+                'sender': m.sender_name,
+                'text': m.text,
+                'timestamp': m.timestamp.isoformat(),
+                'to': m.receiver_sid
+            } for m in messages
+        ]
+    }
 
 @socketio.on('join')
 def handle_join():
@@ -73,7 +96,10 @@ def handle_message(data):
     if msg_text == f"/login {ADMIN_PASS}":
         admins.add(request.sid)
         users[request.sid] = f"ADMIN-{len(admins)}"
-        emit('admin_status', {'is_admin' : True})
+        # Generate admin token
+        token = secrets.token_urlsafe(32)
+        admin_tokens[token] = request.sid
+        emit('admin_status', {'is_admin': True, 'token': token})
         emit('sys_msg', {'msg': "คุณเข้าสู่ระบบแอดมินแล้ว"})
         return
     new_msg = None
