@@ -24,7 +24,8 @@
         <button class="del-btn" onclick="clearChat()">ลบประวัติฝั่งฉัน</button>
     </div>
     <div id="admin-info">
-        กำลังตอบกลับ ID: <input type="text" id="target_sid" readonly style="width:120px; border:none; background:transparent; font-weight:bold;">
+        กำลังตอบกลับ ID: <input type="text" id="target_sid" readonly style="width:120px; border:none; background:transparent; font-weight:bold; color:#007bff;">
+        <button onclick="clearReply()" style="background:none; border:none; color:#d9534f; cursor:pointer; font-size:11px; margin-left:10px;">ลบ</button>
     </div>
     <div id="chat"></div>
     <div id="input-area">
@@ -78,6 +79,7 @@
     socket.on('clear_screen', () => { document.getElementById('chat').innerHTML = "<div style='text-align:center; color:gray;'>--- ลบประวัติฝั่งคุณแล้ว ---</div>"; });
 
     function setReply(sid) { document.getElementById('target_sid').value = sid; document.getElementById('m').focus(); }
+    function clearReply() { document.getElementById('target_sid').value = ''; }
     function clearChat() { if(confirm("ลบประวัติเฉพาะฝั่งคุณ? (ข้อมูลฝั่งแอดมินยังอยู่เหมือนเดิม)")) socket.emit('clear_my_chat'); }
 
     document.getElementById('m').addEventListener("keypress", (e) => { if (e.key === "Enter") sendMsg(); });

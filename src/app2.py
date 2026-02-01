@@ -92,6 +92,12 @@ def handle_message(data):
             emit('new_msg', {'user': "ADMIN", 'text': msg_text}, room=target_sid)
             for a_sid in admins: # แจ้งแอดมินทุกคนว่าตอบแล้ว
                 emit('new_msg', {'user': f"ตอบถึง {users.get(target_sid)}", 'text': msg_text, 'from_sid': target_sid}, room=a_sid)
+        else:
+            # If no target, broadcast to all users
+            new_msg = Message(sender_sid=request.sid, receiver_sid="ALL", sender_name="ADMIN", text=msg_text)
+            socketio.emit('new_msg', {'user': "ADMIN", 'text': msg_text})
+            for a_sid in admins:
+                emit('new_msg', {'user': "BROADCAST", 'text': msg_text}, room=a_sid)
     if new_msg:
         db.session.add(new_msg)
         db.session.commit()
