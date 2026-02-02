@@ -73,10 +73,9 @@
         }
     });
 
-    // รับรายชื่อผู้ใช้จาก Server และแสดงผลใน Sidebar
     socket.on('update_user_list', d => {
         const userListDiv = document.getElementById('user-list');
-        userListDiv.innerHTML = ''; // Clear current list
+        userListDiv.innerHTML = '';
         d.users.forEach(user => {
             const userItem = document.createElement('div');
             userItem.className = 'user-item';
@@ -86,7 +85,7 @@
         });
     });
 
-    // Helper functions (เหมือนเดิม)
+    // Helper functions
     function playNotificationSound() {
         const audio = new Audio('https://assets.mixkit.co');
         audio.play().catch(e => console.warn("Audio play failed"));
@@ -97,7 +96,6 @@
         div.className = `msg ${className}`;
         let tool = '';
         if (fromSid && isAdmin) { 
-            // ปุ่มตอบกลับในแชท ใช้งานได้เหมือนกับกดที่ Sidebar
             tool = `<span class="admin-action" onclick="setReply('${fromSid}', '${user}')">ตอบกลับคนนี้</span>`;
         }
         div.innerHTML = `<b>${user}:</b> ${text}${tool}`;
@@ -106,7 +104,7 @@
         return div;
     }
 
-    // --- Event Handlers (เหมือนเดิม) ---
+    // --- Event Handlers ---
     socket.on('new_msg', d => {
         const msgClass = (d.user === "คุณ") ? 'my-msg' : (d.user === "ADMIN" ? 'admin-msg' : 'other-msg');
         appendMessage(d.user, d.text, msgClass, d.from_sid);
@@ -133,17 +131,14 @@
             alert('ยังไม่เชื่อมต่อกับเซิร์ฟเวอร์');
             return;
         }
-        // ใช้ targetSid จาก Global variable
         const payload = {text: input.value, target_sid: targetSid}; 
         socket.emit('message', payload);
         input.value = '';
     }
     
-    // อัปเดตฟังก์ชัน setReply ให้เก็บ targetSid และไฮไลท์ชื่อใน Sidebar
     function setReply(sid, name = 'User') {
         targetSid = sid;
         document.getElementById('m').focus();
-        // ไฮไลท์ user ที่กำลังเลือกตอบใน Sidebar (CSS ต้องรองรับ active-target)
         document.querySelectorAll('.user-item').forEach(el => {
             el.classList.remove('active-target');
             if (el.innerText.includes(name)) {
