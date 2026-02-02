@@ -17,7 +17,6 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True # ป้องกัน JS อ่�
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' # ช่วยป้องกัน CSRF attacks
 
 db = SQLAlchemy(app)
-# manage_session=False ช่วยให้ SocketIO ใช้ร่วมกับ Flask Session ได้เสถียรขึ้น
 socketio = SocketIO(app, cors_allowed_origins="*", manage_session=False)
 
 # --- Database Model (PEP 8 standard class name) ---
@@ -38,9 +37,7 @@ users = {}   # {sid: nick}
 admins = set() # {sid, sid, ...}
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'adminworakanjajakub')
 
-# --- Helper Function: ส่งรายชื่อผู้ใช้ให้แอดมินทุกคน ---
 def send_user_list_to_admins():
-    # กรองเฉพาะ User ทั่วไป ไม่ใช่ Admin
     user_list = [{"sid": sid, "name": name} for sid, name in users.items() if sid not in admins]
     for a_sid in admins:
         emit('update_user_list', {'users': user_list}, room=a_sid)
@@ -51,26 +48,22 @@ def index():
 
 @socketio.on('join')
 def handle_join():
-    # ตรวจสอบว่าเบราว์เซอร์นี้เคยล็อกอินแอดมินไว้หรือไม่ (Persistent Check)
     is_admin_session = session.get('is_admin', False)
     
     if is_admin_session:
-        session.permanent = True # ยืนยันสถานะถาวร
+        session.permanent = True
         admins.add(request.sid)
         nick = session.get('admin_nick', 'ADMIN')
         users[request.sid] = nick
         emit('admin_status', {'is_admin': True})
-        print(f"[ADMIN] {nick} reconnected with persistent session.")
     else:
         nick = f"User-{random.randint(1000, 9999)}"
         users[request.sid] = nick
-        # แจ้งเตือนแอดมินทุกคนเมื่อมี User ใหม่เข้า
         for a_sid in admins:
             emit('sys_msg', {'msg': f"🔔 {nick} เข้าสู่ระบบแล้ว"}, room=a_sid)
 
     emit('set_identity', {'name': nick, 'id': request.sid})
 
-    # โหลดประวัติแชท
     history = Message.query.filter(
         ((Message.sender_sid == request.sid) | (Message.receiver_sid == request.sid)),
         (Message.user_deleted == False)
@@ -79,8 +72,25 @@ def handle_join():
     for msg in history:
         emit('new_msg', {'user': msg.sender_name, 'text': msg.text})
     
-    # อัปเดตรายชื่อให้แอดมินทันทีที่มีคน Join
     send_user_list_to_admins()
+
+# --- NEW EVENT: Handle direct password login attempt ---
+@socketio.on('admin_login_attempt')
+def handle_admin_login(data):
+    password = data.get('password')
+    if password == ADMIN_PASS:
+        session.permanent = True # ทำให้ Cookie เก็บไว้ในเครื่องถาวร (10 ปี)
+        session['is_admin'] = True
+        session['admin_nick'] = f"ADMIN-{random.randint(10, 99)}"
+        # ต้อง emit admin_status กลับไปที่ sid ที่เพิ่งล็อกอินสำเร็จ
+        emit('admin_status', {'is_admin': True, 'message': '✅ ล็อกอินแอดมินสำเร็จ'})
+        # เพิ่มเข้า users/admins sets สำหรับการเชื่อมต่อปัจจุบัน
+        admins.add(request.sid)
+        users[request.sid] = session['admin_nick']
+        send_user_list_to_admins()
+    else:
+        emit('sys_msg', {'msg': '❌ รหัสผ่านแอดมินไม่ถูกต้อง'})
+
 
 @socketio.on('message')
 def handle_message(data):
@@ -88,29 +98,17 @@ def handle_message(data):
     target_sid = data.get('target_sid')
     if not msg_text: return
 
-    # --- คำสั่งล็อกอินแอดมิน ---
-    if msg_text == f"/login {ADMIN_PASS}":
-        session.permanent = True # ทำให้ Cookie เก็บไว้ในเครื่องถาวร (10 ปี)
-        session['is_admin'] = True
-        session['admin_nick'] = f"ADMIN-{random.randint(10, 99)}"
-        admins.add(request.sid)
-        users[request.sid] = session['admin_nick']
-        emit('admin_status', {'is_admin': True})
-        emit('sys_msg', {'msg': "✅ ยินดีต้อนรับ! ระบบจะจดจำแอดมินไว้ตลอดไป"})
-        send_user_list_to_admins() # อัปเดตรายชื่อเมื่อมีแอดมินคนใหม่
-        return
-
     # --- คำสั่งล็อกเอาต์ (สำหรับล้างสถานะในเครื่อง) ---
     if msg_text == "/logout" and request.sid in admins:
-        session.clear() # เคลียร์ข้อมูลทั้งหมดใน Session
+        session.clear()
         if request.sid in admins: admins.remove(request.sid)
         emit('admin_status', {'is_admin': False})
         emit('sys_msg', {'msg': "ออกจากระบบแอดมินแล้ว โปรดรีเฟรชหน้าจอเพื่อความสมบูรณ์"})
-        send_user_list_to_admins() # อัปเดตรายชื่อเมื่อแอดมิน Logout
+        send_user_list_to_admins()
         return
 
+    # ... ส่วนการส่งข้อความ User/Admin อื่นๆ เหมือนเดิม ... (ละไว้)
     new_msg = None
-    # --- กรณี User ส่งหา Admin ---
     if request.sid not in admins:
         new_msg = Message(sender_sid=request.sid, receiver_sid="ADMINS", sender_name=users[request.sid], text=msg_text)
         if not admins:
@@ -119,17 +117,18 @@ def handle_message(data):
             emit('new_msg', {'user': users[request.sid], 'text': msg_text, 'from_sid': request.sid}, room=a_sid)
             emit('sys_msg', {'msg': "📩 มีข้อความใหม่จากลูกค้า!"}, room=a_sid)
         emit('new_msg', {'user': "คุณ", 'text': msg_text}, room=request.sid)
-    # --- กรณี Admin ตอบกลับ ---
     else:
         if target_sid:
             new_msg = Message(sender_sid=request.sid, receiver_sid=target_sid, sender_name="ADMIN", text=msg_text)
             emit('new_msg', {'user': "ADMIN", 'text': msg_text}, room=target_sid)
-            for a_sid in admins: # ซิงค์ข้อความให้แอดมินคนอื่นเห็นด้วย
+            for a_sid in admins:
                 emit('new_msg', {'user': f"ตอบถึง {users.get(target_sid, 'User')}", 'text': msg_text, 'from_sid': target_sid}, room=a_sid)
 
     if new_msg:
         db.session.add(new_msg)
         db.session.commit()
+
+# ... clear_chat, disconnect functions เหมือนเดิม ...
 
 @socketio.on('clear_my_chat')
 def clear_chat():
@@ -143,7 +142,6 @@ def handle_disconnect():
     if sid in admins:
         admins.remove(sid)
     users.pop(sid, None)
-    # อัปเดตรายชื่อให้แอดมินทันทีที่มีคน Disconnect
     send_user_list_to_admins()
 
 if __name__ == '__main__':
