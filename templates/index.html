@@ -7,15 +7,13 @@
     <script src="https://cdn.socket.io"></script>
     <style>
         body { font-family: sans-serif; background: #e5ddd5; margin: 0; display: flex; height: 100vh; }
-        /* Layout container */
+        /* ... CSS Styles อื่นๆ เหมือนเดิม ... */
         #chat-container { display: flex; flex-direction: column; flex: 1; }
-        /* User List Sidebar (ซ่อนไว้สำหรับ User ทั่วไป) */
         #user-list-sidebar { width: 250px; background: #f7f7f7; padding: 15px; overflow-y: auto; border-right: 1px solid #ccc; display: none; }
         #user-list-sidebar h4 { margin-top: 0; }
         .user-item { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; }
         .user-item:hover { background: #e9e9e9; }
         .user-item.active-target { background: #a8dadc; font-weight: bold; }
-
         #header { background: #075e54; color: white; padding: 10px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
         #chat { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 8px; }
         .msg { padding: 10px; border-radius: 10px; max-width: 85%; box-shadow: 0 1px 1px rgba(0,0,0,0.1); font-size: 14px; line-height: 1.4; }
@@ -27,20 +25,35 @@
         input { flex: 1; padding: 12px; border-radius: 20px; border: 1px solid #ddd; outline: none; }
         button { border: none; background: #075e54; color: white; padding: 10px 18px; border-radius: 20px; cursor: pointer; font-weight: bold; }
         .del-btn { background: #d9534f; font-size: 11px; padding: 5px 10px; border-radius: 5px; }
+        /* Modal Styles */
+        .modal { display: none; position: fixed; z-index: 1; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 300px; border-radius: 10px; }
+        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
+    <!-- Admin Login Modal -->
+    <div id="adminModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h4>Admin Login</h4>
+            <input type="password" id="adminPassInput" placeholder="Enter Admin Password">
+            <button onclick="submitAdminLogin()">Login</button>
+        </div>
+    </div>
+    
     <div id="user-list-sidebar">
         <h4>ผู้ใช้งานออนไลน์ (สำหรับแอดมิน)</h4>
-        <div id="user-list">
-            <!-- User items will be injected here by JS -->
-        </div>
+        <div id="user-list"></div>
     </div>
     
     <div id="chat-container">
         <div id="header">
             <span id="my-name">ชื่อของคุณ: ...</span>
-            <button class="del-btn" onclick="clearChat()">ลบประวัติฝั่งฉัน</button>
+            <div>
+                <button onclick="openModal()">Admin Login</button> <!-- ปุ่มเปิด Modal -->
+                <button class="del-btn" onclick="clearChat()">ลบประวัติฝั่งฉัน</button>
+            </div>
         </div>
         <div id="chat"></div>
         <div id="input-area">
@@ -57,7 +70,6 @@
     socket.on('connect', () => { socket.emit('join'); });
     socket.on('disconnect', (reason) => { });
     document.getElementById('send-btn').disabled = false;
-
     socket.on('set_identity', d => { document.getElementById('my-name').innerText = d.name; });
     
     // --- Admin Features ---
@@ -68,11 +80,13 @@
             if (Notification.permission !== "granted" && Notification.permission !== "denied") {
                 Notification.requestPermission();
             }
+            if (d.message) appendMessage("System", d.message, "system-msg");
         } else {
             document.getElementById('user-list-sidebar').style.display = 'none';
         }
     });
 
+    // ... ส่วน JavaScript อื่นๆ (update_user_list, Helper functions, Event Handlers, Action Functions) เหมือนเดิม ...
     socket.on('update_user_list', d => {
         const userListDiv = document.getElementById('user-list');
         userListDiv.innerHTML = '';
@@ -85,7 +99,6 @@
         });
     });
 
-    // Helper functions
     function playNotificationSound() {
         const audio = new Audio('https://assets.mixkit.co');
         audio.play().catch(e => console.warn("Audio play failed"));
@@ -104,7 +117,6 @@
         return div;
     }
 
-    // --- Event Handlers ---
     socket.on('new_msg', d => {
         const msgClass = (d.user === "คุณ") ? 'my-msg' : (d.user === "ADMIN" ? 'admin-msg' : 'other-msg');
         appendMessage(d.user, d.text, msgClass, d.from_sid);
@@ -122,15 +134,10 @@
     
     socket.on('clear_screen', () => { document.getElementById('chat').innerHTML = "<div class='msg system-msg'>--- ลบประวัติฝั่งคุณแล้ว ---</div>"; });
 
-    // --- Action Functions ---
-
     function sendMsg() {
         const input = document.getElementById('m');
         if(!input.value.trim()) return;
-        if(!socket || !socket.connected) {
-            alert('ยังไม่เชื่อมต่อกับเซิร์ฟเวอร์');
-            return;
-        }
+        if(!socket || !socket.connected) { alert('ยังไม่เชื่อมต่อกับเซิร์ฟเวอร์'); return; }
         const payload = {text: input.value, target_sid: targetSid}; 
         socket.emit('message', payload);
         input.value = '';
@@ -139,17 +146,23 @@
     function setReply(sid, name = 'User') {
         targetSid = sid;
         document.getElementById('m').focus();
-        document.querySelectorAll('.user-item').forEach(el => {
-            el.classList.remove('active-target');
-            if (el.innerText.includes(name)) {
-                el.classList.add('active-target');
-            }
-        });
+        document.querySelectorAll('.user-item').forEach(el => { el.classList.remove('active-target'); if (el.innerText.includes(name)) { el.classList.add('active-target'); } });
         appendMessage("System", `กำลังเตรียมตอบกลับถึง ${name}`, "system-msg");
     }
 
     function clearChat() { if(confirm("ลบประวัติเฉพาะฝั่งคุณ?")) socket.emit('clear_my_chat'); }
 
     document.getElementById('m').addEventListener("keypress", (e) => { if (e.key === "Enter") sendMsg(); });
+    
+    // --- Modal Logic ---
+    function openModal() { document.getElementById("adminModal").style.display = "block"; }
+    function closeModal() { document.getElementById("adminModal").style.display = "none"; }
+    function submitAdminLogin() {
+        const password = document.getElementById("adminPassInput").value;
+        socket.emit('admin_login_attempt', {password: password});
+        closeModal();
+        document.getElementById("adminPassInput").value = '';
+    }
+
  </script>
 </html>
