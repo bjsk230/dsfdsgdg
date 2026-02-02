@@ -1,17 +1,19 @@
 import os
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from flask import Flask, render_template, request, session
 from flask_socketio import SocketIO, emit
 from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
+# การตั้งค่าความปลอดภัยและระบบ Session
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-very-secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///chat.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# ตั้งค่าให้ Session อยู่ได้นาน 10 ปี (เสมือนตลอดไป)
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=3650)
 
 db = SQLAlchemy(app)
-# manage_session=False ช่วยให้ SocketIO ใช้ร่วมกับ Flask Session ได้เสถียรขึ้น
 socketio = SocketIO(app, cors_allowed_origins="*", manage_session=False)
 
 # --- Database Model ---
@@ -27,8 +29,8 @@ class Message(db.Model):
 with app.app_context():
     db.create_all()
 
-# --- Chat Management ---
-users = {}  # {sid: nickname}
+# --- Chat Logic ---
+users = {}   # {sid: nick}
 admins = set() # {sid, sid, ...}
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'adminworakanjajakub')
 
@@ -38,24 +40,26 @@ def index():
 
 @socketio.on('join')
 def handle_join():
-    # 1. ตรวจสอบสถานะแอดมินจาก Session (ทำให้ Login ค้างไว้ได้)
+    # ตรวจสอบว่าเบราว์เซอร์นี้เคยล็อกอินแอดมินไว้หรือไม่ (Persistent Check)
     is_admin_session = session.get('is_admin', False)
     
     if is_admin_session:
+        session.permanent = True 
         admins.add(request.sid)
         nick = session.get('admin_nick', 'ADMIN')
         users[request.sid] = nick
         emit('admin_status', {'is_admin': True})
+        print(f"[ADMIN] {nick} reconnected.")
     else:
         nick = f"User-{random.randint(1000, 9999)}"
         users[request.sid] = nick
         # แจ้งเตือนแอดมินทุกคนเมื่อมี User ใหม่เข้า
         for a_sid in admins:
-            emit('sys_msg', {'msg': f"🔔 {nick} เชื่อมต่อเข้ามาแล้ว"}, room=a_sid)
+            emit('sys_msg', {'msg': f"🔔 {nick} เข้าสู่ระบบแล้ว"}, room=a_sid)
 
     emit('set_identity', {'name': nick, 'id': request.sid})
 
-    # 2. โหลดประวัติแชท (เฉพาะที่ยังไม่ถูกลบ)
+    # โหลดประวัติแชท
     history = Message.query.filter(
         ((Message.sender_sid == request.sid) | (Message.receiver_sid == request.sid)),
         (Message.user_deleted == False)
@@ -70,43 +74,49 @@ def handle_message(data):
     target_sid = data.get('target_sid')
     if not msg_text: return
 
-    # --- ระบบล็อกอินแอดมิน ---
+    # --- คำสั่งล็อกอินแอดมิน ---
     if msg_text == f"/login {ADMIN_PASS}":
+        session.permanent = True # ทำให้ Cookie เก็บไว้ในเครื่องถาวร
         session['is_admin'] = True
-        session['admin_nick'] = f"ADMIN-{len(admins) + 1}"
+        session['admin_nick'] = f"ADMIN-{random.randint(10, 99)}"
         admins.add(request.sid)
         users[request.sid] = session['admin_nick']
         emit('admin_status', {'is_admin': True})
-        emit('sys_msg', {'msg': "✅ ล็อกอินแอดมินสำเร็จ (สถานะจะคงอยู่แม้รีเฟรช)"})
+        emit('sys_msg', {'msg': "✅ ยินดีต้อนรับ! ระบบจะจดจำแอดมินไว้ตลอดไป"})
+        return
+
+    # --- คำสั่งล็อกเอาต์ (ถ้าต้องการล้างสถานะ) ---
+    if msg_text == "/logout" and request.sid in admins:
+        session.clear()
+        admins.remove(request.sid)
+        emit('admin_status', {'is_admin': False})
+        emit('sys_msg', {'msg': "ออกจากระบบแอดมินแล้ว"})
         return
 
     new_msg = None
-    # --- กรณีผู้ใช้ส่งหาแอดมิน ---
+    # --- กรณี User ส่งหา Admin ---
     if request.sid not in admins:
         new_msg = Message(sender_sid=request.sid, receiver_sid="ADMINS", sender_name=users[request.sid], text=msg_text)
-        
         if not admins:
-            emit('sys_msg', {'msg': "ขณะนี้ไม่มีแอดมินออนไลน์ กรุณารอสักครู่"})
+            emit('sys_msg', {'msg': "ขณะนี้แอดมินไม่อยู่ ข้อมูลของคุณถูกบันทึกไว้แล้ว"})
         
         for a_sid in admins:
             emit('new_msg', {'user': users[request.sid], 'text': msg_text, 'from_sid': request.sid}, room=a_sid)
-            emit('sys_msg', {'msg': "📩 มีข้อความใหม่จากลูกค้า!"}, room=a_sid) # แจ้งเตือนแอดมิน
+            emit('sys_msg', {'msg': "📩 มีข้อความใหม่จากลูกค้า!"}, room=a_sid) # เสียงแจ้งเตือนฝั่ง Client
             
         emit('new_msg', {'user': "คุณ", 'text': msg_text}, room=request.sid)
-
-    # --- กรณีแอดมินตอบกลับ ---
+    
+    # --- กรณี Admin ตอบกลับ ---
     else:
         if target_sid:
             new_msg = Message(sender_sid=request.sid, receiver_sid=target_sid, sender_name="ADMIN", text=msg_text)
             emit('new_msg', {'user': "ADMIN", 'text': msg_text}, room=target_sid)
-            # แจ้งแอดมินคนอื่นๆ ว่ามีการตอบแชทนี้แล้ว
-            for a_sid in admins:
-                emit('new_msg', {'user': f"ตอบถึง {users.get(target_sid, 'Unknown')}", 'text': msg_text, 'from_sid': target_sid}, room=a_sid)
+            for a_sid in admins: # ซิงค์ข้อความให้แอดมินคนอื่นเห็นด้วย
+                emit('new_msg', {'user': f"ตอบถึง {users.get(target_sid, 'User')}", 'text': msg_text, 'from_sid': target_sid}, room=a_sid)
 
     if new_msg:
         db.session.add(new_msg)
         db.session.commit()
-        emit('message_ack', {'status': 'saved', 'id': new_msg.id}, room=request.sid)
 
 @socketio.on('clear_my_chat')
 def clear_chat():
@@ -116,12 +126,9 @@ def clear_chat():
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    sid = request.sid
-    if sid in admins:
-        admins.remove(sid)
-    users.pop(sid, None)
+    if request.sid in admins:
+        admins.remove(request.sid)
+    users.pop(request.sid, None)
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    # ปิด reloader เพื่อป้องกัน WinError 10048 ใน Windows
-    socketio.run(app, host='0.0.0.0', port=port, debug=True, use_reloader=False)
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True, use_reloader=False)
