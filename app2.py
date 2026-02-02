@@ -131,4 +131,7 @@ def handle_disconnect():
     users.pop(request.sid, None)
 
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True, use_reloader=False)
+    # บน Production (Railway) จะใช้ Gunicorn เป็นหลัก
+    # แต่ส่วนนี้ใส่ไว้เพื่อการทดสอบ Local ให้ไม่เกิด Error ซ้อน
+    port = int(os.environ.get('PORT', 5000))
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False, log_output=True)
