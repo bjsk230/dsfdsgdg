@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat with Admin (Anonymous)</title>
     <script src="https://cdn.socket.io"></script>
     <style>
+        /* ... CSS Styles เหมือนเดิม ... */
         body { font-family: sans-serif; background: #e5ddd5; margin: 0; display: flex; height: 100vh; }
-        /* ... CSS Styles อื่นๆ เหมือนเดิม ... */
         #chat-container { display: flex; flex-direction: column; flex: 1; }
         #user-list-sidebar { width: 250px; background: #f7f7f7; padding: 15px; overflow-y: auto; border-right: 1px solid #ccc; display: none; }
         #user-list-sidebar h4 { margin-top: 0; }
@@ -51,13 +51,14 @@
         <div id="header">
             <span id="my-name">ชื่อของคุณ: ...</span>
             <div>
-                <button onclick="openModal()">Admin Login</button> <!-- ปุ่มเปิด Modal -->
+                <button onclick="openModal()">Admin Login</button> 
                 <button class="del-btn" onclick="clearChat()">ลบประวัติฝั่งฉัน</button>
             </div>
         </div>
         <div id="chat"></div>
         <div id="input-area">
-            <input type="text" id="m" placeholder="พิมพ์ข้อความ (ใช้ /logout เพื่อออกจากแอดมิน)" autocomplete="off">
+            <!-- ลบคำแนะนำ /logout ออกจาก placeholder เพราะมีปุ่ม Login/Logout แยกแล้ว -->
+            <input type="text" id="m" placeholder="พิมพ์ข้อความ..." autocomplete="off">
             <button id="send-btn" onclick="sendMsg()" disabled>ส่ง</button>
         </div>
     </div>
@@ -77,16 +78,22 @@
         isAdmin = d.is_admin;
         if (isAdmin) {
             document.getElementById('user-list-sidebar').style.display = 'block';
+            // เปลี่ยนปุ่ม Login เป็น Logout เมื่อล็อกอินแล้ว
+            document.querySelector('#header button:first-of-type').innerText = 'Admin Logout';
+            document.querySelector('#header button:first-of-type').onclick = () => socket.emit('message', {text: '/logout'});
             if (Notification.permission !== "granted" && Notification.permission !== "denied") {
                 Notification.requestPermission();
             }
             if (d.message) appendMessage("System", d.message, "system-msg");
         } else {
+            // เปลี่ยนปุ่ม Logout กลับเป็น Login เมื่อล็อกเอาต์
+            document.querySelector('#header button:first-of-type').innerText = 'Admin Login';
+            document.querySelector('#header button:first-of-type').onclick = openModal;
             document.getElementById('user-list-sidebar').style.display = 'none';
         }
     });
 
-    // ... ส่วน JavaScript อื่นๆ (update_user_list, Helper functions, Event Handlers, Action Functions) เหมือนเดิม ...
+    // ... Helper functions (appendMessage, playNotificationSound, etc.) ...
     socket.on('update_user_list', d => {
         const userListDiv = document.getElementById('user-list');
         userListDiv.innerHTML = '';
@@ -98,42 +105,29 @@
             userListDiv.appendChild(userItem);
         });
     });
-
     function playNotificationSound() {
         const audio = new Audio('https://assets.mixkit.co');
         audio.play().catch(e => console.warn("Audio play failed"));
     }
-    
     function appendMessage(user, text, className, fromSid = null) {
         const div = document.createElement('div');
         div.className = `msg ${className}`;
         let tool = '';
-        if (fromSid && isAdmin) { 
-            tool = `<span class="admin-action" onclick="setReply('${fromSid}', '${user}')">ตอบกลับคนนี้</span>`;
-        }
+        if (fromSid && isAdmin) { tool = `<span class="admin-action" onclick="setReply('${fromSid}', '${user}')">ตอบกลับคนนี้</span>`; }
         div.innerHTML = `<b>${user}:</b> ${text}${tool}`;
         document.getElementById('chat').appendChild(div);
         document.getElementById('chat').scrollTop = 99999;
         return div;
     }
-
     socket.on('new_msg', d => {
         const msgClass = (d.user === "คุณ") ? 'my-msg' : (d.user === "ADMIN" ? 'admin-msg' : 'other-msg');
         appendMessage(d.user, d.text, msgClass, d.from_sid);
     });
-
     socket.on('sys_msg', d => {
-        if (isAdmin && (d.msg.includes("📩") || d.msg.includes("🔔"))) {
-            playNotificationSound();
-            if (Notification.permission === "granted") {
-                new Notification("แจ้งเตือนแชท", { body: d.msg, icon: 'https://railway.app' });
-            }
-        }
+        if (isAdmin && (d.msg.includes("📩") || d.msg.includes("🔔"))) { playNotificationSound(); if (Notification.permission === "granted") { new Notification("แจ้งเตือนแชท", { body: d.msg, icon: 'https://railway.app' }); } }
         appendMessage("System", d.msg, "system-msg");
     });
-    
     socket.on('clear_screen', () => { document.getElementById('chat').innerHTML = "<div class='msg system-msg'>--- ลบประวัติฝั่งคุณแล้ว ---</div>"; });
-
     function sendMsg() {
         const input = document.getElementById('m');
         if(!input.value.trim()) return;
@@ -142,27 +136,29 @@
         socket.emit('message', payload);
         input.value = '';
     }
-    
     function setReply(sid, name = 'User') {
         targetSid = sid;
         document.getElementById('m').focus();
         document.querySelectorAll('.user-item').forEach(el => { el.classList.remove('active-target'); if (el.innerText.includes(name)) { el.classList.add('active-target'); } });
         appendMessage("System", `กำลังเตรียมตอบกลับถึง ${name}`, "system-msg");
     }
-
     function clearChat() { if(confirm("ลบประวัติเฉพาะฝั่งคุณ?")) socket.emit('clear_my_chat'); }
-
     document.getElementById('m').addEventListener("keypress", (e) => { if (e.key === "Enter") sendMsg(); });
     
-    // --- Modal Logic ---
-    function openModal() { document.getElementById("adminModal").style.display = "block"; }
-    function closeModal() { document.getElementById("adminModal").style.display = "none"; }
+    // --- Modal Logic (ขั้นสูงขึ้นเล็กน้อย) ---
+    const adminModal = document.getElementById("adminModal");
+    function openModal() { adminModal.style.display = "block"; }
+    function closeModal() { adminModal.style.display = "none"; }
     function submitAdminLogin() {
         const password = document.getElementById("adminPassInput").value;
-        socket.emit('admin_login_attempt', {password: password});
-        closeModal();
-        document.getElementById("adminPassInput").value = '';
+        if (password) {
+            socket.emit('admin_login_attempt', {password: password});
+            closeModal();
+            document.getElementById("adminPassInput").value = '';
+        }
     }
+    // เพิ่ม Event listener สำหรับ Enter key ใน Modal input
+    document.getElementById("adminPassInput").addEventListener("keypress", (e) => { if (e.key === "Enter") submitAdminLogin(); });
 
  </script>
 </html>
