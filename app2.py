@@ -111,6 +111,58 @@ def clear_chat():
 def handle_disconnect():
     if request.sid in admins: admins.remove(request.sid)
     users.pop(request.sid, None)
+#--- เพิ่มฟังก์ชันตรวจสอบสถานะแอดมินและระบบแจ้งเตือน ---
+
+@socketio.on('join')
+def handle_join():
+    # ... โค้ดเดิม ...
+    
+    # แจ้งเตือนแอดมินทุกคนเมื่อมีคนใหม่เข้ามา
+    if request.sid not in admins:
+        for a_sid in admins:
+            emit('sys_msg', {'msg': f"🔔 {nick} เข้าสู่ระบบแชทแล้ว"}, room=a_sid)
+
+@socketio.on('message')
+def handle_message(data):
+    msg_text = data.get('text', '').strip()
+    target_sid = data.get('target_sid')
+    
+    if not msg_text: return
+
+    # ปรับปรุงระบบ Login ให้รักษาเซสชันได้ดีขึ้น
+    if msg_text == f"/login {ADMIN_PASS}":
+        admins.add(request.sid)
+        users[request.sid] = f"ADMIN-{len(admins)}"
+        emit('admin_status', {'is_admin' : True})
+        emit('sys_msg', {'msg': "✅ คุณเป็นแอดมินแล้ว ระบบจะแจ้งเตือนเมื่อมีข้อความเข้า"})
+        return
+
+    new_msg = None
+    if request.sid not in admins:
+        new_msg = Message(sender_sid=request.sid, receiver_sid="ADMINS", sender_name=users[request.sid], text=msg_text)
+        
+        # แจ้งเตือนแอดมินแบบ Real-time
+        if not admins:
+            emit('sys_msg', {'msg': "ขณะนี้ไม่มีแอดมินออนไลน์ ข้อความของคุณจะถูกฝากไว้ในระบบ"})
+        else:
+            for a_sid in admins:
+                # ส่งทั้งข้อความและเสียงแจ้งเตือน (ถ้าฝั่งเครื่องแอดมินทำไว้)
+                emit('new_msg', {'user': users[request.sid], 'text': msg_text, 'from_sid': request.sid}, room=a_sid)
+                emit('sys_msg', {'msg': "📩 มีข้อความใหม่จากลูกค้า!"}, room=a_sid)
+        
+        emit('new_msg', {'user': "คุณ", 'text': msg_text}, room=request.sid)
+    
+    # ... ส่วนของการบันทึก DB (เหมือนเดิม) ...
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    sid = request.sid
+    if sid in admins:
+        admins.remove(sid)
+        # แจ้งแอดมินที่เหลือว่ามีคนหลุด
+        for a_sid in admins:
+            emit('sys_msg', {'msg': f"⚠️ แอดมิน {users.get(sid)} ออกจากระบบ"}, room=a_sid)
+    users.pop(sid, None)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
