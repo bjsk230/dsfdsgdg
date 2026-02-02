@@ -1,22 +1,26 @@
 import os
 import random
 from datetime import datetime, timezone, timedelta
-from flask import Flask, render_template, request, session
+from flask import Flask, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit
 from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
-# การตั้งค่าความปลอดภัยและระบบ Session
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-very-secret')
+# การตั้งค่าความปลอดภัยและระบบ Session ตามมาตรฐาน
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-change-in-production-please-use-a-strong-key')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///chat.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # ตั้งค่าให้ Session อยู่ได้นาน 10 ปี (เสมือนตลอดไป)
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=3650)
+app.config['SESSION_COOKIE_SECURE'] = True # ควรรันบน HTTPS เท่านั้น (Railway จัดการให้)
+app.config['SESSION_COOKIE_HTTPONLY'] = True # ป้องกัน JS อ่าน Cookie
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' # ช่วยป้องกัน CSRF attacks
 
 db = SQLAlchemy(app)
+# manage_session=False ช่วยให้ SocketIO ใช้ร่วมกับ Flask Session ได้เสถียรขึ้น
 socketio = SocketIO(app, cors_allowed_origins="*", manage_session=False)
 
-# --- Database Model ---
+# --- Database Model (PEP 8 standard class name) ---
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender_sid = db.Column(db.String(100))
@@ -40,16 +44,16 @@ def index():
 
 @socketio.on('join')
 def handle_join():
-    # ตรวจสอบว่าเบราว์เซอร์นี้เคยล็อกอินแอดมินไว้หรือไม่ (Persistent Check)
+    # ตรวจสอบสถานะแอดมินจาก Session Cookie
     is_admin_session = session.get('is_admin', False)
     
     if is_admin_session:
-        session.permanent = True 
+        session.permanent = True # ยืนยันสถานะถาวร
         admins.add(request.sid)
         nick = session.get('admin_nick', 'ADMIN')
         users[request.sid] = nick
         emit('admin_status', {'is_admin': True})
-        print(f"[ADMIN] {nick} reconnected.")
+        print(f"[ADMIN] {nick} reconnected with persistent session.")
     else:
         nick = f"User-{random.randint(1000, 9999)}"
         users[request.sid] = nick
@@ -85,33 +89,30 @@ def handle_message(data):
         emit('sys_msg', {'msg': "✅ ยินดีต้อนรับ! ระบบจะจดจำแอดมินไว้ตลอดไป"})
         return
 
-    # --- คำสั่งล็อกเอาต์ (ถ้าต้องการล้างสถานะ) ---
+    # --- คำสั่งล็อกเอาต์ (สำหรับล้างสถานะในเครื่อง) ---
     if msg_text == "/logout" and request.sid in admins:
-        session.clear()
-        admins.remove(request.sid)
+        session.clear() # เคลียร์ข้อมูลทั้งหมดใน Session
+        if request.sid in admins: admins.remove(request.sid)
         emit('admin_status', {'is_admin': False})
-        emit('sys_msg', {'msg': "ออกจากระบบแอดมินแล้ว"})
+        emit('sys_msg', {'msg': "ออกจากระบบแอดมินแล้ว โปรดรีเฟรชหน้าจอเพื่อความสมบูรณ์"})
         return
 
     new_msg = None
-    # --- กรณี User ส่งหา Admin ---
     if request.sid not in admins:
+        # User Logic ... (เหมือนเดิม)
         new_msg = Message(sender_sid=request.sid, receiver_sid="ADMINS", sender_name=users[request.sid], text=msg_text)
         if not admins:
             emit('sys_msg', {'msg': "ขณะนี้แอดมินไม่อยู่ ข้อมูลของคุณถูกบันทึกไว้แล้ว"})
-        
         for a_sid in admins:
             emit('new_msg', {'user': users[request.sid], 'text': msg_text, 'from_sid': request.sid}, room=a_sid)
-            emit('sys_msg', {'msg': "📩 มีข้อความใหม่จากลูกค้า!"}, room=a_sid) # เสียงแจ้งเตือนฝั่ง Client
-            
+            emit('sys_msg', {'msg': "📩 มีข้อความใหม่จากลูกค้า!"}, room=a_sid)
         emit('new_msg', {'user': "คุณ", 'text': msg_text}, room=request.sid)
-    
-    # --- กรณี Admin ตอบกลับ ---
     else:
+        # Admin Reply Logic ... (เหมือนเดิม)
         if target_sid:
             new_msg = Message(sender_sid=request.sid, receiver_sid=target_sid, sender_name="ADMIN", text=msg_text)
             emit('new_msg', {'user': "ADMIN", 'text': msg_text}, room=target_sid)
-            for a_sid in admins: # ซิงค์ข้อความให้แอดมินคนอื่นเห็นด้วย
+            for a_sid in admins:
                 emit('new_msg', {'user': f"ตอบถึง {users.get(target_sid, 'User')}", 'text': msg_text, 'from_sid': target_sid}, room=a_sid)
 
     if new_msg:
@@ -131,7 +132,4 @@ def handle_disconnect():
     users.pop(request.sid, None)
 
 if __name__ == '__main__':
-    # บน Production (Railway) จะใช้ Gunicorn เป็นหลัก
-    # แต่ส่วนนี้ใส่ไว้เพื่อการทดสอบ Local ให้ไม่เกิด Error ซ้อน
-    port = int(os.environ.get('PORT', 5000))
-    socketio.run(app, host='0.0.0.0', port=port, debug=False, use_reloader=False, log_output=True)
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True, use_reloader=False)
